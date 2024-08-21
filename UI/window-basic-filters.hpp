@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2015 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,8 +21,7 @@
 #include <QDialogButtonBox>
 #include <memory>
 #include <obs.hpp>
-
-#include "properties-view.hpp"
+#include <properties-view.hpp>
 
 class OBSBasic;
 class QMenu;
@@ -50,6 +49,8 @@ private:
 	inline OBSSource GetFilter(int row, bool async);
 
 	void UpdateFilters();
+	void UpdateSplitter();
+	void UpdateSplitter(bool show_splitter_frame);
 	void UpdatePropertiesView(int row, bool async);
 
 	static void OBSSourceFilterAdded(void *param, calldata_t *data);
@@ -85,11 +86,7 @@ private slots:
 	void ReorderFilters();
 	void RenameAsyncFilter();
 	void RenameEffectFilter();
-	void DuplicateAsyncFilter();
-	void DuplicateEffectFilter();
 	void ResetFilters();
-
-	void AddFilterFromAction();
 
 	void on_addAsyncFilter_clicked();
 	void on_removeAsyncFilter_clicked();
@@ -111,13 +108,14 @@ private slots:
 	void on_actionMoveUp_triggered();
 	void on_actionMoveDown_triggered();
 
-	void AsyncFilterNameEdited(QWidget *editor,
-				   QAbstractItemDelegate::EndEditHint endHint);
-	void EffectFilterNameEdited(QWidget *editor,
-				    QAbstractItemDelegate::EndEditHint endHint);
+	void on_actionRenameFilter_triggered();
 
 	void CopyFilter();
 	void PasteFilter();
+
+	void FiltersMoved(const QModelIndex &srcParent, int srcIdxStart,
+			  int srcIdxEnd, const QModelIndex &dstParent,
+			  int dstIdx);
 
 public:
 	OBSBasicFilters(QWidget *parent, OBSSource source_);
@@ -133,4 +131,6 @@ public:
 
 protected:
 	virtual void closeEvent(QCloseEvent *event) override;
+	virtual bool nativeEvent(const QByteArray &eventType, void *message,
+				 qintptr *result) override;
 };

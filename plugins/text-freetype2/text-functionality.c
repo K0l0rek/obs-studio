@@ -30,16 +30,8 @@ extern uint32_t texbuf_w, texbuf_h;
 
 void draw_outlines(struct ft2_source *srcdata)
 {
-	// Horrible (hopefully temporary) solution for outlines.
-	uint32_t *tmp;
-
-	struct gs_vb_data *vdata = gs_vertexbuffer_get_data(srcdata->vbuf);
-
 	if (!srcdata->text)
 		return;
-
-	tmp = vdata->colors;
-	vdata->colors = srcdata->colorbuf;
 
 	gs_matrix_push();
 	for (int32_t i = 0; i < 8; i++) {
@@ -47,35 +39,23 @@ void draw_outlines(struct ft2_source *srcdata)
 				      0.0f);
 		draw_uv_vbuffer(srcdata->vbuf, srcdata->tex,
 				srcdata->draw_effect,
-				(uint32_t)wcslen(srcdata->text) * 6);
+				(uint32_t)wcslen(srcdata->text) * 6, false);
 	}
 	gs_matrix_identity();
 	gs_matrix_pop();
-
-	vdata->colors = tmp;
 }
 
 void draw_drop_shadow(struct ft2_source *srcdata)
 {
-	// Horrible (hopefully temporary) solution for drop shadow.
-	uint32_t *tmp;
-
-	struct gs_vb_data *vdata = gs_vertexbuffer_get_data(srcdata->vbuf);
-
 	if (!srcdata->text)
 		return;
-
-	tmp = vdata->colors;
-	vdata->colors = srcdata->colorbuf;
 
 	gs_matrix_push();
 	gs_matrix_translate3f(4.0f, 4.0f, 0.0f);
 	draw_uv_vbuffer(srcdata->vbuf, srcdata->tex, srcdata->draw_effect,
-			(uint32_t)wcslen(srcdata->text) * 6);
+			(uint32_t)wcslen(srcdata->text) * 6, false);
 	gs_matrix_identity();
 	gs_matrix_pop();
-
-	vdata->colors = tmp;
 }
 
 void set_up_vertex_buffer(struct ft2_source *srcdata)
@@ -140,12 +120,14 @@ void set_up_vertex_buffer(struct ft2_source *srcdata)
 	next_char:;
 		glyph_index =
 			FT_Get_Char_Index(srcdata->font_face, srcdata->text[i]);
-		word_width += src_glyph->xadv;
+		if (src_glyph)
+			word_width += src_glyph->xadv;
 	eos_skip:;
 	}
 
 skip_word_wrap:;
 	fill_vertex_buffer(srcdata);
+	gs_vertexbuffer_flush(srcdata->vbuf);
 	obs_leave_graphics();
 }
 
@@ -168,16 +150,6 @@ void fill_vertex_buffer(struct ft2_source *srcdata)
 	if (srcdata->outline_text) {
 		offset = 2;
 		dx = offset;
-	}
-
-	if (srcdata->colorbuf != NULL) {
-		bfree(srcdata->colorbuf);
-		srcdata->colorbuf = NULL;
-	}
-	srcdata->colorbuf =
-		bzalloc(sizeof(uint32_t) * wcslen(srcdata->text) * 6);
-	for (size_t i = 0; i < len * 6; i++) {
-		srcdata->colorbuf[i] = 0xFF000000;
 	}
 
 	for (size_t i = 0; i < len; i++) {
@@ -437,7 +409,7 @@ void load_text_from_file(struct ft2_source *srcdata, const char *filename)
 	fseek(tmp_file, 0, SEEK_END);
 	filesize = (uint32_t)ftell(tmp_file);
 	fseek(tmp_file, 0, SEEK_SET);
-	bytes_read = fread(&header, 2, 1, tmp_file);
+	bytes_read = fread(&header, 1, 2, tmp_file);
 
 	if (bytes_read == 2 && header == 0xFEFF) {
 		// File is already in UTF-16 format
@@ -491,7 +463,7 @@ void read_from_end(struct ft2_source *srcdata, const char *filename)
 		}
 		return;
 	}
-	bytes_read = fread(&value, 2, 1, tmp_file);
+	bytes_read = fread(&value, 1, 2, tmp_file);
 
 	if (bytes_read == 2 && value == 0xFEFF)
 		utf16 = true;
@@ -513,7 +485,7 @@ void read_from_end(struct ft2_source *srcdata, const char *filename)
 			if (bytes_read == 1 && bvalue == '\n')
 				line_breaks++;
 		} else {
-			bytes_read = fread(&value, 2, 1, tmp_file);
+			bytes_read = fread(&value, 1, 2, tmp_file);
 			if (bytes_read == 2 && value == L'\n')
 				line_breaks++;
 		}
@@ -569,12 +541,17 @@ uint32_t get_ft2_text_width(wchar_t *text, struct ft2_source *srcdata)
 		const FT_UInt glyph_index =
 			FT_Get_Char_Index(srcdata->font_face, text[i]);
 
-		load_glyph(srcdata, glyph_index, get_render_mode(srcdata));
-
 		if (text[i] == L'\n')
 			w = 0;
 		else {
-			w += slot->advance.x >> 6;
+			if (src_glyph) {
+				// Use the cached values.
+				w += src_glyph->xadv;
+			} else {
+				load_glyph(srcdata, glyph_index,
+					   get_render_mode(srcdata));
+				w += slot->advance.x >> 6;
+			}
 			if (w > max_w)
 				max_w = w;
 		}

@@ -1,5 +1,5 @@
 /******************************************************************************
-    Copyright (C) 2013 by Hugh Bailey <obs.jim@gmail.com>
+    Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -17,7 +17,6 @@
 
 #pragma once
 
-#include <util/AlignedNew.hpp>
 #include <util/windows/win-version.h>
 
 #include <vector>
@@ -25,8 +24,7 @@
 #include <memory>
 
 #include <windows.h>
-#include <dxgi.h>
-#include <dxgi1_2.h>
+#include <dxgi1_6.h>
 #include <d3d11_1.h>
 #include <d3dcompiler.h>
 
@@ -38,6 +36,9 @@
 #include <util/windows/HRError.hpp>
 
 // #define DISASSEMBLE_SHADERS
+
+typedef HRESULT(WINAPI *pD3DCreateBlob)(_In_ SIZE_T Size,
+					_Out_ ID3DBlob **ppBlob);
 
 struct shader_var;
 struct shader_sampler;
@@ -106,6 +107,8 @@ static inline DXGI_FORMAT ConvertGSTextureFormatResource(gs_color_format format)
 		return DXGI_FORMAT_B8G8R8X8_UNORM;
 	case GS_BGRA_UNORM:
 		return DXGI_FORMAT_B8G8R8A8_UNORM;
+	case GS_RG16:
+		return DXGI_FORMAT_R16G16_UNORM;
 	}
 
 	return DXGI_FORMAT_UNKNOWN;
@@ -142,7 +145,7 @@ ConvertGSTextureFormatViewLinear(gs_color_format format)
 
 static inline gs_color_format ConvertDXGITextureFormat(DXGI_FORMAT format)
 {
-	switch ((unsigned long)format) {
+	switch (format) {
 	case DXGI_FORMAT_A8_UNORM:
 		return GS_A8;
 	case DXGI_FORMAT_R8_UNORM:
@@ -185,6 +188,8 @@ static inline gs_color_format ConvertDXGITextureFormat(DXGI_FORMAT format)
 		return GS_BGRX_UNORM;
 	case DXGI_FORMAT_B8G8R8A8_UNORM:
 		return GS_BGRA_UNORM;
+	case DXGI_FORMAT_R16G16_UNORM:
+		return GS_RG16;
 	}
 
 	return GS_UNKNOWN;
@@ -282,6 +287,24 @@ static inline D3D11_BLEND ConvertGSBlendType(gs_blend_type type)
 	return D3D11_BLEND_ONE;
 }
 
+static inline D3D11_BLEND_OP ConvertGSBlendOpType(gs_blend_op_type type)
+{
+	switch (type) {
+	case GS_BLEND_OP_ADD:
+		return D3D11_BLEND_OP_ADD;
+	case GS_BLEND_OP_SUBTRACT:
+		return D3D11_BLEND_OP_SUBTRACT;
+	case GS_BLEND_OP_REVERSE_SUBTRACT:
+		return D3D11_BLEND_OP_REV_SUBTRACT;
+	case GS_BLEND_OP_MIN:
+		return D3D11_BLEND_OP_MIN;
+	case GS_BLEND_OP_MAX:
+		return D3D11_BLEND_OP_MAX;
+	}
+
+	return D3D11_BLEND_OP_ADD;
+}
+
 static inline D3D11_CULL_MODE ConvertGSCullMode(gs_cull_mode mode)
 {
 	switch (mode) {
@@ -364,9 +387,8 @@ struct gs_vertex_buffer : gs_obj {
 
 	void FlushBuffer(ID3D11Buffer *buffer, void *array, size_t elementSize);
 
-	void MakeBufferList(gs_vertex_shader *shader,
-			    vector<ID3D11Buffer *> &buffers,
-			    vector<uint32_t> &strides);
+	UINT MakeBufferList(gs_vertex_shader *shader, ID3D11Buffer **buffers,
+			    uint32_t *strides);
 
 	void InitBuffer(const size_t elementSize, const size_t numVerts,
 			void *array, ID3D11Buffer **buffer);
@@ -456,13 +478,16 @@ struct gs_texture : gs_obj {
 
 	inline gs_texture(gs_texture_type type, uint32_t levels,
 			  gs_color_format format)
-		: type(type), levels(levels), format(format)
+		: type(type),
+		  levels(levels),
+		  format(format)
 	{
 	}
 
 	inline gs_texture(gs_device *device, gs_type obj_type,
 			  gs_texture_type type)
-		: gs_obj(device, obj_type), type(type)
+		: gs_obj(device, obj_type),
+		  type(type)
 	{
 	}
 
@@ -495,8 +520,8 @@ struct gs_texture_2d : gs_texture {
 	bool genMipmaps = false;
 	uint32_t sharedHandle = GS_INVALID_HANDLE;
 
-	gs_texture_2d *pairedNV12texture = nullptr;
-	bool nv12 = false;
+	gs_texture_2d *pairedTexture = nullptr;
+	bool twoPlane = false;
 	bool chroma = false;
 	bool acquired = false;
 
@@ -513,8 +538,8 @@ struct gs_texture_2d : gs_texture {
 
 	void RebuildSharedTextureFallback();
 	void Rebuild(ID3D11Device *dev);
-	void RebuildNV12_Y(ID3D11Device *dev);
-	void RebuildNV12_UV(ID3D11Device *dev);
+	void RebuildPaired_Y(ID3D11Device *dev);
+	void RebuildPaired_UV(ID3D11Device *dev);
 
 	inline void Release()
 	{
@@ -534,11 +559,12 @@ struct gs_texture_2d : gs_texture {
 		      gs_color_format colorFormat, uint32_t levels,
 		      const uint8_t *const *data, uint32_t flags,
 		      gs_texture_type type, bool gdiCompatible,
-		      bool nv12 = false);
+		      bool twoPlane = false);
 
 	gs_texture_2d(gs_device_t *device, ID3D11Texture2D *nv12,
 		      uint32_t flags);
-	gs_texture_2d(gs_device_t *device, uint32_t handle);
+	gs_texture_2d(gs_device_t *device, uint32_t handle,
+		      bool ntHandle = false);
 	gs_texture_2d(gs_device_t *device, ID3D11Texture2D *obj);
 };
 
@@ -611,7 +637,9 @@ struct gs_zstencil_buffer : gs_obj {
 	}
 
 	inline gs_zstencil_buffer()
-		: width(0), height(0), dxgiFormat(DXGI_FORMAT_UNKNOWN)
+		: width(0),
+		  height(0),
+		  dxgiFormat(DXGI_FORMAT_UNKNOWN)
 	{
 	}
 
@@ -633,7 +661,8 @@ struct gs_stage_surface : gs_obj {
 
 	gs_stage_surface(gs_device_t *device, uint32_t width, uint32_t height,
 			 gs_color_format colorFormat);
-	gs_stage_surface(gs_device_t *device, uint32_t width, uint32_t height);
+	gs_stage_surface(gs_device_t *device, uint32_t width, uint32_t height,
+			 bool p010);
 };
 
 struct gs_sampler_state : gs_obj {
@@ -671,7 +700,8 @@ struct ShaderError {
 	HRESULT hr;
 
 	inline ShaderError(const ComPtr<ID3D10Blob> &errors, HRESULT hr)
-		: errors(errors), hr(hr)
+		: errors(errors),
+		  hr(hr)
 	{
 	}
 };
@@ -695,7 +725,9 @@ struct gs_shader : gs_obj {
 
 	inline gs_shader(gs_device_t *device, gs_type obj_type,
 			 gs_shader_type type)
-		: gs_obj(device, obj_type), type(type), constantSize(0)
+		: gs_obj(device, obj_type),
+		  type(type),
+		  constantSize(0)
 	{
 	}
 
@@ -708,7 +740,8 @@ struct ShaderSampler {
 
 	inline ShaderSampler(const char *name, gs_device_t *device,
 			     gs_sampler_info *info)
-		: name(name), sampler(device, info)
+		: name(name),
+		  sampler(device, info)
 	{
 	}
 };
@@ -757,6 +790,9 @@ struct gs_vertex_shader : gs_shader {
 struct gs_duplicator : gs_obj {
 	ComPtr<IDXGIOutputDuplication> duplicator;
 	gs_texture_2d *texture;
+	bool hdr = false;
+	enum gs_color_space color_space = GS_CS_SRGB;
+	float sdr_white_nits = 80.f;
 	int idx;
 	long refs;
 	bool updated;
@@ -795,18 +831,19 @@ struct gs_pixel_shader : gs_shader {
 };
 
 struct gs_swap_chain : gs_obj {
-	uint32_t numBuffers;
 	HWND hwnd;
 	gs_init_data initData;
 	DXGI_SWAP_CHAIN_DESC swapDesc = {};
+	gs_color_space space;
 
 	gs_texture_2d target;
 	gs_zstencil_buffer zs;
 	ComPtr<IDXGISwapChain> swap;
+	HANDLE hWaitable = NULL;
 
 	void InitTarget(uint32_t cx, uint32_t cy);
 	void InitZStencilBuffer(uint32_t cx, uint32_t cy);
-	void Resize(uint32_t cx, uint32_t cy);
+	void Resize(uint32_t cx, uint32_t cy, gs_color_format format);
 	void Init();
 
 	void Rebuild(ID3D11Device *dev);
@@ -815,10 +852,15 @@ struct gs_swap_chain : gs_obj {
 	{
 		target.Release();
 		zs.Release();
-		swap.Release();
+		if (hWaitable) {
+			CloseHandle(hWaitable);
+			hWaitable = NULL;
+		}
+		swap.Clear();
 	}
 
 	gs_swap_chain(gs_device *device, const gs_init_data *data);
+	virtual ~gs_swap_chain();
 };
 
 struct BlendState {
@@ -827,6 +869,7 @@ struct BlendState {
 	gs_blend_type destFactorC;
 	gs_blend_type srcFactorA;
 	gs_blend_type destFactorA;
+	gs_blend_op_type op;
 
 	bool redEnabled;
 	bool greenEnabled;
@@ -839,6 +882,7 @@ struct BlendState {
 		  destFactorC(GS_BLEND_INVSRCALPHA),
 		  srcFactorA(GS_BLEND_ONE),
 		  destFactorA(GS_BLEND_INVSRCALPHA),
+		  op(GS_BLEND_OP_ADD),
 		  redEnabled(true),
 		  greenEnabled(true),
 		  blueEnabled(true),
@@ -861,7 +905,8 @@ struct SavedBlendState : BlendState {
 	inline void Release() { state.Release(); }
 
 	inline SavedBlendState(const BlendState &val, D3D11_BLEND_DESC &desc)
-		: BlendState(val), bd(desc)
+		: BlendState(val),
+		  bd(desc)
 	{
 	}
 };
@@ -873,7 +918,10 @@ struct StencilSide {
 	gs_stencil_op_type zpass;
 
 	inline StencilSide()
-		: test(GS_ALWAYS), fail(GS_KEEP), zfail(GS_KEEP), zpass(GS_KEEP)
+		: test(GS_ALWAYS),
+		  fail(GS_KEEP),
+		  zfail(GS_KEEP),
+		  zpass(GS_KEEP)
 	{
 	}
 };
@@ -913,7 +961,8 @@ struct SavedZStencilState : ZStencilState {
 
 	inline SavedZStencilState(const ZStencilState &val,
 				  D3D11_DEPTH_STENCIL_DESC desc)
-		: ZStencilState(val), dsd(desc)
+		: ZStencilState(val),
+		  dsd(desc)
 	{
 	}
 };
@@ -940,13 +989,28 @@ struct SavedRasterState : RasterState {
 
 	inline SavedRasterState(const RasterState &val,
 				D3D11_RASTERIZER_DESC &desc)
-		: RasterState(val), rd(desc)
+		: RasterState(val),
+		  rd(desc)
 	{
 	}
 };
 
 struct mat4float {
 	float mat[16];
+};
+
+struct gs_monitor_color_info {
+	bool hdr;
+	UINT bits_per_color;
+	ULONG sdr_white_nits;
+
+	gs_monitor_color_info(bool hdr, int bits_per_color,
+			      ULONG sdr_white_nits)
+		: hdr(hdr),
+		  bits_per_color(bits_per_color),
+		  sdr_white_nits(sdr_white_nits)
+	{
+	}
 };
 
 struct gs_device {
@@ -956,10 +1020,13 @@ struct gs_device {
 	ComPtr<ID3D11DeviceContext> context;
 	uint32_t adpIdx = 0;
 	bool nv12Supported = false;
+	bool p010Supported = false;
+	bool fastClearSupported = false;
 
 	gs_texture_2d *curRenderTarget = nullptr;
 	gs_zstencil_buffer *curZStencilBuffer = nullptr;
 	int curRenderSide = 0;
+	enum gs_color_space curColorSpace = GS_CS_SRGB;
 	bool curFramebufferSrgb = false;
 	bool curFramebufferInvalidate = false;
 	gs_texture *curTextures[GS_MAX_TEXTURES];
@@ -987,11 +1054,6 @@ struct gs_device {
 	ID3D11BlendState *curBlendState = nullptr;
 	D3D11_PRIMITIVE_TOPOLOGY curToplogy;
 
-	pD3DCompile d3dCompile = nullptr;
-#ifdef DISASSEMBLE_SHADERS
-	pD3DDisassemble d3dDisassemble = nullptr;
-#endif
-
 	gs_rect viewport;
 
 	vector<mat4float> projStack;
@@ -1003,9 +1065,9 @@ struct gs_device {
 	vector<gs_device_loss> loss_callbacks;
 	gs_obj *first_obj = nullptr;
 
-	void InitCompiler();
+	vector<std::pair<HMONITOR, gs_monitor_color_info>> monitor_to_hdr;
+
 	void InitFactory();
-	void ReorderAdapters(uint32_t &adapterIdx);
 	void InitAdapter(uint32_t adapterIdx);
 	void InitDevice(uint32_t adapterIdx);
 
@@ -1018,9 +1080,9 @@ struct gs_device {
 
 	void LoadVertexBufferData();
 
-	inline void CopyTex(ID3D11Texture2D *dst, uint32_t dst_x,
-			    uint32_t dst_y, gs_texture_t *src, uint32_t src_x,
-			    uint32_t src_y, uint32_t src_w, uint32_t src_h);
+	void CopyTex(ID3D11Texture2D *dst, uint32_t dst_x, uint32_t dst_y,
+		     gs_texture_t *src, uint32_t src_x, uint32_t src_y,
+		     uint32_t src_w, uint32_t src_h);
 
 	void UpdateViewProjMatrix();
 
@@ -1029,6 +1091,8 @@ struct gs_device {
 	void RebuildDevice();
 
 	bool HasBadNV12Output();
+
+	gs_monitor_color_info GetMonitorColorInfo(HMONITOR hMonitor);
 
 	gs_device(uint32_t adapterIdx);
 	~gs_device();
