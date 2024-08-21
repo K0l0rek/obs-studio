@@ -1,0 +1,67 @@
+name: Build OBS Studio with Media Foundation on Windows
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        configuration: [Release, Debug]
+
+    steps:
+    - name: Checkout OBS Studio repository
+      uses: actions/checkout@v2
+      with:
+        repository: obsproject/obs-studio
+        path: obs-studio
+
+    - name: Checkout Media Foundation repository
+      run: |
+        git clone https://github.com/microsoft/media-foundation.git media-foundation
+        cd media-foundation
+        git submodule update --init --recursive
+
+    - name: Modify OBS to use Media Foundation
+      run: |
+        cd obs-studio
+        # Example modification: Replace DirectShow with Media Foundation in relevant source files
+        sed -i 's/DirectShow/MediaFoundation/g' ./plugins/video_capture/windows/win-capture.cpp
+        sed -i 's/DirectShow/MediaFoundation/g' ./plugins/video_capture/windows/win-capture.h
+        sed -i 's/DirectShowFilter/MediaFoundationFilter/g' ./plugins/video_capture/windows/win-capture.cpp
+
+    - name: Set up MSVC (Visual Studio 2019)
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Install dependencies
+      run: |
+        choco install cmake --installargs '"ADD_CMAKE_TO_PATH=System"'
+        choco install git
+        choco install ninja
+        choco install 7zip
+
+    - name: Configure OBS Studio with Media Foundation support
+      run: |
+        cd obs-studio
+        mkdir build
+        cd build
+        cmake -G "Ninja" -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} -DENABLE_MEDIA_FOUNDATION=ON -DBUILD_WIN=ON ..
+
+    - name: Build OBS Studio
+      run: |
+        cd obs-studio/build
+        ninja
+
+    - name: Archive build artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        name: obs-build-${{ matrix.configuration }}
+        path: obs-studio/build/bin/Release/
